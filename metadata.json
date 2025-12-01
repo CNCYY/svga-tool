@@ -1,0 +1,5 @@
+{
+  "name": "SVGA Key Injector",
+  "description": "A tool to add named dynamic placeholder layers to SVGA animations for client-side replacement.",
+  "requestFramePermissions": []
+}
