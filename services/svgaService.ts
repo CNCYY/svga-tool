@@ -1,3 +1,4 @@
+
 import { SVGA_PROTO_JSON } from "../constants";
 import { Rect, SvgaData, AnimationConfig, AnimationPreset } from "../types";
 
@@ -46,30 +47,24 @@ const base64ToUint8Array = (base64: string): Uint8Array => {
 };
 
 // Helper: Sanitize Image Keys for File System Compatibility (Mobile)
-// Replaces slashes, backslashes, and spaces with underscores.
-// Now ALLOWS hyphens (-) as they are safe for file systems.
 const sanitizeKey = (key: string): string => {
     if (!key) return "";
-    return key.replace(/[^a-zA-Z0-9_\-]/g, "_"); // Allow alphanumeric, underscore, and hyphen
+    return key.replace(/[^a-zA-Z0-9_\-]/g, "_"); 
 };
 
-// EPSILON STRATEGY (Refined):
-// Native players (C++/Proto2) often fail if optional fields (like x=0, y=0) are skipped by the encoder.
-// We use forceNonZero ONLY for Layout coordinates and Transform translations.
+// EPSILON STRATEGY (Refined)
 const forceNonZero = (val: any, def: number = 0): number => {
     let n = typeof val === 'number' ? val : def;
     if (Math.abs(n) <= 1e-5) return 0.00001; 
     return n;
 };
 
-// SAFE FLOAT:
-// For visual properties (Colors, Stroke Width, Params) and Matrix values (Scale/Skew),
-// 0 is a valid and distinct value. We should NOT convert 0 to 0.00001 here.
+// SAFE FLOAT
 const safeFloat = (val: any, def: number = 0): number => {
     return typeof val === 'number' ? val : def;
 };
 
-// 1x1 Transparent PNG bytes for fallback (Strictly valid PNG signature)
+// 1x1 Transparent PNG bytes for fallback
 const FALLBACK_PNG = new Uint8Array([
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0,
     0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 1, 115, 82, 71, 66, 0, 174,
@@ -86,22 +81,17 @@ export const decodeSvga = async (buffer: ArrayBuffer): Promise<SvgaData> => {
 
   const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
   
-  // Ensure we start with a clean Uint8Array
   let u8Arr = new Uint8Array(buffer);
   
-  // Check for ZIP signature (PK..)
   if (u8Arr[0] === 0x50 && u8Arr[1] === 0x4B) {
       throw new Error("ZIP-based SVGA (v1.x) files are not currently supported. Please use SVGA 2.0 files.");
   }
 
   let decompressed = false;
-
   try {
-      // 1. Try standard Zlib inflate
       u8Arr = window.pako.inflate(u8Arr);
       decompressed = true;
   } catch (e) {
-      // 2. If Zlib fails, try Raw Deflate (no header)
       try {
           u8Arr = window.pako.inflateRaw(u8Arr);
           decompressed = true;
@@ -119,15 +109,13 @@ export const decodeSvga = async (buffer: ArrayBuffer): Promise<SvgaData> => {
         arrays: true,
         objects: true,
         oneofs: true,
-        bytes: String, // Keep images as Base64 strings in the JS object
+        bytes: String, 
       });
       return object as SvgaData;
   } catch (error: any) {
       console.error("Protobuf Decode Error:", error);
       let msg = "Failed to decode SVGA Protobuf structure.";
-      if (!decompressed) {
-          msg += " The file might be compressed in an unsupported format or corrupted.";
-      }
+      if (!decompressed) msg += " The file might be compressed in an unsupported format or corrupted.";
       throw new Error(`${msg} Details: ${error.message}`);
   }
 };
@@ -142,9 +130,6 @@ const sanitizeRGBA = (color: any) => ({
 });
 
 const sanitizeTransform = (t: any) => ({
-    // Transform: Only force tx/ty (position) to exist.
-    // Scale (a, d) and Skew (b, c) should use safeFloat to allow true 0/1 values.
-    // Forcing 0.00001 on b/c (skew) makes dirty matrices that confuse parsers.
     a: safeFloat(t?.a, 1),
     b: safeFloat(t?.b, 0),
     c: safeFloat(t?.c, 0),
@@ -154,9 +139,6 @@ const sanitizeTransform = (t: any) => ({
 });
 
 const sanitizeLayout = (l: any) => ({
-    // Layout: Force ALL fields to be non-zero (epsilon).
-    // Native mobile parsers (iOS/Android) often treat missing Layout fields (0 defaults) as malformed data.
-    // Writing 0.00001 ensures the field is present in the binary.
     x: forceNonZero(l?.x, 0),
     y: forceNonZero(l?.y, 0),
     width: forceNonZero(l?.width, 0),
@@ -165,53 +147,14 @@ const sanitizeLayout = (l: any) => ({
 
 const sanitizeShape = (shape: any): any => {
     let type = shape.type || 0;
-    
-    // Safety check: If type is SHAPE (0) but 'd' is empty, force to KEEP (3)
-    if (type === 0 && (!shape.shape || !shape.shape.d)) {
-        type = 3; 
-    }
-
+    if (type === 0 && (!shape.shape || !shape.shape.d)) type = 3; 
     const cleanShape: any = { type };
 
-    // Handle OneOf Args
-    if (shape.shape) {
-        cleanShape.shape = { d: shape.shape.d || "" };
-    }
-    if (shape.rect) {
-        cleanShape.rect = {
-            x: safeFloat(shape.rect.x),
-            y: safeFloat(shape.rect.y),
-            width: safeFloat(shape.rect.width),
-            height: safeFloat(shape.rect.height),
-            cornerRadius: safeFloat(shape.rect.cornerRadius)
-        };
-    }
-    if (shape.ellipse) {
-        cleanShape.ellipse = {
-            x: safeFloat(shape.ellipse.x),
-            y: safeFloat(shape.ellipse.y),
-            radiusX: safeFloat(shape.ellipse.radiusX),
-            radiusY: safeFloat(shape.ellipse.radiusY)
-        };
-    }
-
-    // Styles
-    if (shape.styles) {
-        cleanShape.styles = {
-            fill: shape.styles.fill ? sanitizeRGBA(shape.styles.fill) : undefined,
-            stroke: shape.styles.stroke ? sanitizeRGBA(shape.styles.stroke) : undefined,
-            strokeWidth: safeFloat(shape.styles.strokeWidth),
-            lineCap: shape.styles.lineCap || 0,
-            lineJoin: shape.styles.lineJoin || 0,
-            miterLimit: safeFloat(shape.styles.miterLimit),
-            lineDash: Array.isArray(shape.styles.lineDash) ? shape.styles.lineDash.map((v:any) => safeFloat(v)) : [] 
-        };
-    }
-
-    // Transform
-    if (shape.transform) {
-        cleanShape.transform = sanitizeTransform(shape.transform);
-    }
+    if (shape.shape) cleanShape.shape = { d: shape.shape.d || "" };
+    if (shape.rect) cleanShape.rect = { x: safeFloat(shape.rect.x), y: safeFloat(shape.rect.y), width: safeFloat(shape.rect.width), height: safeFloat(shape.rect.height), cornerRadius: safeFloat(shape.rect.cornerRadius) };
+    if (shape.ellipse) cleanShape.ellipse = { x: safeFloat(shape.ellipse.x), y: safeFloat(shape.ellipse.y), radiusX: safeFloat(shape.ellipse.radiusX), radiusY: safeFloat(shape.ellipse.radiusY) };
+    if (shape.styles) cleanShape.styles = { fill: shape.styles.fill ? sanitizeRGBA(shape.styles.fill) : undefined, stroke: shape.styles.stroke ? sanitizeRGBA(shape.styles.stroke) : undefined, strokeWidth: safeFloat(shape.styles.strokeWidth), lineCap: shape.styles.lineCap || 0, lineJoin: shape.styles.lineJoin || 0, miterLimit: safeFloat(shape.styles.miterLimit), lineDash: Array.isArray(shape.styles.lineDash) ? shape.styles.lineDash.map((v:any) => safeFloat(v)) : [] };
+    if (shape.transform) cleanShape.transform = sanitizeTransform(shape.transform);
 
     return cleanShape;
 };
@@ -219,31 +162,21 @@ const sanitizeShape = (shape: any): any => {
 export const encodeSvga = (data: SvgaData, compress: boolean = true): Uint8Array => {
   const root = getSvgaRoot();
   if (!root) throw new Error("Protobuf library not loaded");
-
   const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
   
-  // --- STRICT SANITIZATION START ---
-
-  // 1. Prepare Images & Sanitize Keys
   const encodedImages: Record<string, Uint8Array> = {};
   const validImageKeys = new Set<string>();
-  const keyMapping: Record<string, string> = {}; // Old Key -> New Safe Key
+  const keyMapping: Record<string, string> = {}; 
 
   if (data.images) {
       for (const key in data.images) {
           const safeKey = sanitizeKey(key);
           keyMapping[key] = safeKey;
-
           const val = data.images[key] as any;
           if (typeof val === 'string') {
                const bytes = base64ToUint8Array(val);
-               if (bytes.length > 0) {
-                   encodedImages[safeKey] = bytes;
-                   validImageKeys.add(safeKey);
-               } else {
-                   encodedImages[safeKey] = FALLBACK_PNG;
-                   validImageKeys.add(safeKey);
-               }
+               encodedImages[safeKey] = bytes.length > 0 ? bytes : FALLBACK_PNG;
+               validImageKeys.add(safeKey);
           } else if (val instanceof Uint8Array) {
                encodedImages[safeKey] = val;
                validImageKeys.add(safeKey);
@@ -251,27 +184,20 @@ export const encodeSvga = (data: SvgaData, compress: boolean = true): Uint8Array
       }
   }
 
-  // 2. Prepare Sprites (Deep Copy & Sanitize)
   const encodedSprites = (data.sprites || []).map((sprite: any) => {
       let imageKey = sprite.imageKey || "";
-      if (imageKey && keyMapping[imageKey]) {
-          imageKey = keyMapping[imageKey];
-      }
-
-      // REFERENTIAL INTEGRITY CHECK
+      if (imageKey && keyMapping[imageKey]) imageKey = keyMapping[imageKey];
       if (imageKey && !validImageKeys.has(imageKey)) {
           console.warn(`Fixing missing image reference: ${imageKey}`);
           encodedImages[imageKey] = FALLBACK_PNG;
           validImageKeys.add(imageKey);
       }
-
       return {
         imageKey: imageKey,
         matteKey: sprite.matteKey || "",
         frames: (sprite.frames || []).map((frame: any) => ({
             alpha: safeFloat(frame.alpha, 1),
             clipPath: frame.clipPath || "",
-            // Use sanitizeLayout to force writing x/y/w/h as 0.00001
             layout: frame.layout ? sanitizeLayout(frame.layout) : sanitizeLayout({}), 
             transform: frame.transform ? sanitizeTransform(frame.transform) : sanitizeTransform({}),
             shapes: (frame.shapes || []).map(sanitizeShape)
@@ -279,7 +205,6 @@ export const encodeSvga = (data: SvgaData, compress: boolean = true): Uint8Array
       };
   });
 
-  // 3. Prepare Audios
   const encodedAudios = (data['audios'] || []).map((audio: any) => ({
       audioKey: sanitizeKey(audio.audioKey || ""),
       startFrame: Math.round(audio.startFrame || 0),
@@ -288,9 +213,8 @@ export const encodeSvga = (data: SvgaData, compress: boolean = true): Uint8Array
       totalTime: Math.round(audio.totalTime || 0)
   }));
 
-  // 4. Construct Clean Payload
   const payload = {
-      version: "2.0", // Explicitly 2.0
+      version: "2.0", 
       params: {
           viewBoxWidth: safeFloat(data.params?.viewBoxWidth, 800),
           viewBoxHeight: safeFloat(data.params?.viewBoxHeight, 800),
@@ -301,153 +225,128 @@ export const encodeSvga = (data: SvgaData, compress: boolean = true): Uint8Array
       sprites: encodedSprites,
       audios: encodedAudios
   };
-  // --- STRICT SANITIZATION END ---
 
   const message = MovieEntity.fromObject(payload);
   const buffer = MovieEntity.encode(message).finish();
-
-  if (compress && window.pako) {
-      // Use level 6 for standard Zlib compression (0x78 0x9C).
-      return window.pako.deflate(buffer, { level: 6 });
-  }
+  if (compress && window.pako) return window.pako.deflate(buffer, { level: 6 });
   return buffer;
 };
 
 // Generates a transparent PNG matching target dimensions
-// Updated to accept width/height to correct 1:1 sizing issues
 const generatePlaceholderPng = async (width: number, height: number): Promise<Uint8Array> => {
     return new Promise((resolve) => {
-        const w = Math.ceil(width);
-        const h = Math.ceil(height);
+        const w = Math.ceil(width) || 1;
+        const h = Math.ceil(height) || 1;
         const canvas = document.createElement('canvas');
-        canvas.width = w > 0 ? w : 1;
-        canvas.height = h > 0 ? h : 1;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { resolve(FALLBACK_PNG); return; }
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.width = w;
+        canvas.height = h;
         canvas.toBlob((blob) => {
-            if (blob) {
-                blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-            } else {
-                 resolve(FALLBACK_PNG);
-            }
+            if (blob) blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+            else resolve(FALLBACK_PNG);
         }, 'image/png');
     });
 };
 
-// Generates a white tilted sweep bar for shine animation
-// Optimized to match target dimensions to prevent distortion of the 30-degree angle
-const generateShineBitmap = async (width: number, height: number): Promise<Uint8Array> => {
+// Generates a PALE GOLD GRADIENT RECT PNG (used for shine placeholder of Key layers)
+const generatePaleGoldRectPng = async (width: number, height: number): Promise<Uint8Array> => {
     return new Promise((resolve) => {
-        const w = Math.ceil(width);
-        const h = Math.ceil(height);
+        const w = Math.ceil(width) || 1;
+        const h = Math.ceil(height) || 1;
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (!ctx) { resolve(FALLBACK_PNG); return; }
-
-        ctx.clearRect(0, 0, w, h);
-
-        ctx.save();
-        // Move to center to rotate
-        ctx.translate(w / 2, h / 2);
-        ctx.rotate(Math.PI / 6); // 30 degrees tilt
         
-        // Use exact diagonal length to ensure the bar covers the box without being excessively huge
-        const diagonal = Math.sqrt(w*w + h*h);
-        const barSize = Math.ceil(diagonal * 1.2); 
-        
-        // Create gradient centered at 0
-        const gradient = ctx.createLinearGradient(-barSize/2, 0, barSize/2, 0);
-        
-        // "Overlay" simulation: Very sharp peak white with transparency
-        // Tightened stops to make the beam sharper and less broad
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-        gradient.addColorStop(0.4, 'rgba(255, 255, 255, 0)');
-        gradient.addColorStop(0.45, 'rgba(255, 255, 255, 0.2)');
-        gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.95)'); // High intensity peak
-        gradient.addColorStop(0.55, 'rgba(255, 255, 255, 0.2)');
-        gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0)');
-        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        // Pale Gold/White Gradient
+        const gradient = ctx.createLinearGradient(0, 0, w, h);
+        gradient.addColorStop(0, '#FFFFFF'); 
+        gradient.addColorStop(0.3, '#FFF8E1'); // Pale Amber
+        gradient.addColorStop(0.5, '#FFFFFF'); 
+        gradient.addColorStop(0.7, '#FFF8E1'); 
+        gradient.addColorStop(1, '#FFFFFF');
 
         ctx.fillStyle = gradient;
-        // Draw the bar centered on the rotated axis
-        ctx.fillRect(-barSize/2, -barSize/2, barSize, barSize);
-        ctx.restore();
+        ctx.fillRect(0, 0, w, h);
+        
+        // Add Bloom
+        ctx.filter = 'blur(4px)';
+        ctx.drawImage(canvas, 0, 0);
+        ctx.filter = 'none';
 
         canvas.toBlob((blob) => {
-             if (blob) {
-                 blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-             } else {
-                 resolve(FALLBACK_PNG);
-             }
+            if (blob) blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+            else resolve(FALLBACK_PNG);
         }, 'image/png');
     });
 };
 
-// Helper to load image for baking
-const loadImage = async (bytes: Uint8Array): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
+// Generate PALE GOLD/WHITE Silhouette with BLUR (Glowing Effect)
+const generatePaleGoldSilhouette = async (baseBytes: Uint8Array, width: number, height: number): Promise<Uint8Array> => {
+    return new Promise((resolve) => {
         const img = new Image();
-        const blob = new Blob([bytes], { type: 'image/png' });
+        const blob = new Blob([baseBytes], { type: 'image/png' });
         img.onload = () => {
-            URL.revokeObjectURL(img.src);
-            resolve(img);
+             const w = Math.ceil(width);
+             const h = Math.ceil(height);
+             const canvas = document.createElement('canvas');
+             canvas.width = w;
+             canvas.height = h;
+             const ctx = canvas.getContext('2d');
+             if (!ctx) { resolve(FALLBACK_PNG); return; }
+
+             ctx.clearRect(0, 0, w, h);
+             
+             // 1. Draw base image
+             ctx.drawImage(img, 0, 0, w, h);
+             
+             // 2. Composite Pale Gold/White Gradient
+             ctx.globalCompositeOperation = 'source-in';
+             const gradient = ctx.createLinearGradient(0, 0, w, h);
+             gradient.addColorStop(0, '#FFFFFF'); 
+             gradient.addColorStop(0.2, '#FFE082'); // Light Amber
+             gradient.addColorStop(0.5, '#FFFFFF'); // Bright White Center
+             gradient.addColorStop(0.8, '#FFE082'); 
+             gradient.addColorStop(1, '#FFFFFF');
+             ctx.fillStyle = gradient;
+             ctx.fillRect(0, 0, w, h);
+             
+             // 3. Create a glow copy
+             const tempCanvas = document.createElement('canvas');
+             tempCanvas.width = w;
+             tempCanvas.height = h;
+             const tempCtx = tempCanvas.getContext('2d');
+             if (tempCtx) {
+                 tempCtx.drawImage(canvas, 0, 0);
+                 ctx.globalCompositeOperation = 'source-over';
+                 ctx.clearRect(0, 0, w, h);
+                 ctx.filter = 'blur(2px)'; // Slight blur for glow/feathering
+                 ctx.drawImage(tempCanvas, 0, 0);
+                 ctx.filter = 'none';
+             }
+
+             canvas.toBlob((b) => {
+                 if (b) b.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+                 else resolve(FALLBACK_PNG);
+             }, 'image/png');
+             URL.revokeObjectURL(img.src);
         };
-        img.onerror = reject;
+        img.onerror = () => resolve(FALLBACK_PNG);
         img.src = URL.createObjectURL(blob);
     });
 };
 
-// Helper to bake shine frame
-const bakeShineFrame = async (
-    baseImg: HTMLImageElement,
-    shineImg: HTMLImageElement,
-    shineTx: number,
-    shineTy: number,
-    width: number,
-    height: number
-): Promise<string> => { // Returns Base64
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return "";
-
-    // 1. Draw Base
-    ctx.drawImage(baseImg, 0, 0);
-
-    // 2. Composite Shine
-    ctx.globalCompositeOperation = 'source-atop';
-    // Translate shine image
-    ctx.save();
-    ctx.translate(shineTx, shineTy);
-    ctx.drawImage(shineImg, 0, 0); // draw shine image at 0,0 relative to translated context
-    ctx.restore();
-
-    // 3. Export
-    return canvas.toDataURL('image/png').split(',')[1];
-};
-
-
-// Shared measurement canvas
-const measureCanvas = document.createElement('canvas');
-const measureCtx = measureCanvas.getContext('2d');
-
-// Calculates exact text bounds to prevent clipping and ensure visual accuracy
 export const calcTextSize = (text: string, fontSize: number, fontFamily: string = "sans-serif") => {
+    const measureCanvas = document.createElement('canvas');
+    const measureCtx = measureCanvas.getContext('2d');
     if (!measureCtx) return { width: 0, height: 0 };
     measureCtx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
     const metrics = measureCtx.measureText(text);
-    // Use line-height 1.2 which is standard for most inputs
     const height = Math.ceil(fontSize * 1.2); 
-    // Small buffer for anti-aliasing and emojis
     const width = Math.ceil(metrics.width + 4); 
     return { width, height };
 };
 
-// Generates a PNG from text with specific styles, scaling down to fit if necessary
 export const generateTextBitmap = async (
     text: string, 
     fontSize: number, 
@@ -459,51 +358,29 @@ export const generateTextBitmap = async (
     gradientEnd: string = "#ffffff"
 ): Promise<Uint8Array> => {
     return new Promise((resolve) => {
-        // Change SCALE to 1 to ensure 1:1 output size as requested by user
-        const SCALE = 1; 
-        const w = Math.ceil(width * SCALE);
-        const h = Math.ceil(height * SCALE);
-        const baseFontSize = fontSize * SCALE;
-
+        const w = Math.ceil(width);
+        const h = Math.ceil(height);
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
-        
         if (!ctx) { resolve(FALLBACK_PNG); return; }
 
         ctx.clearRect(0, 0, w, h);
-        
-        // Basic system font stack for maximum compatibility
-        const fontStr = (size: number) => `bold ${size}px "${fontFamily}", sans-serif`;
-        ctx.font = fontStr(baseFontSize);
-        
-        // Measure text at desired font size
+        ctx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
         const metrics = ctx.measureText(text);
         const textWidth = metrics.width;
-        // Estimate height roughly as 1.2em
-        const textHeight = baseFontSize * 1.2;
+        const textHeight = fontSize * 1.2;
 
-        // SCALE TO FIT LOGIC
-        // We calculate how much we need to scale down to fit width and height
         const scaleX = w / textWidth;
         const scaleY = h / textHeight;
-        // Use the smaller scale factor to ensure it fits both dimensions. 
-        // We limit scale to 1 (don't scale UP if text is small, just center it).
         const fitScale = Math.min(scaleX, scaleY, 1);
 
-        // Apply scale
         ctx.translate(w / 2, h / 2);
         ctx.scale(fitScale, fitScale);
-        
-        // Use middle alignment to center vertically in the box
         ctx.textBaseline = 'middle'; 
         ctx.textAlign = 'center';
 
-        // Gradient Logic
-        // Defined in LOCAL coordinate space after transform.
-        // Text is centered at (0,0). Top is approx -textHeight/2, Bottom is +textHeight/2.
-        // This ensures the gradient spans exactly the text height, making it vibrant even if text is small.
         if (isGradient) {
             const halfH = textHeight / 2;
             const gradient = ctx.createLinearGradient(0, -halfH, 0, halfH);
@@ -514,173 +391,53 @@ export const generateTextBitmap = async (
             ctx.fillStyle = colorOrGradientStart;
         }
 
-        // Draw text at center (0,0 because we translated)
         ctx.fillText(text, 0, 0);
 
         canvas.toBlob((blob) => {
-            if (blob) {
-                blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-            } else {
-                 resolve(FALLBACK_PNG);
-            }
+            if (blob) blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+            else resolve(FALLBACK_PNG);
         }, 'image/png');
     });
 };
 
-// Process an uploaded image: Draw it to a canvas of the target dimensions (Aspect Fit / Contain)
-// and export as standardized 32-bit PNG bytes.
-export const processUploadedImage = async (
-    file: File, 
-    targetWidth: number, 
-    targetHeight: number
-): Promise<Uint8Array> => {
+export const processUploadedImage = async (file: File, targetWidth: number, targetHeight: number): Promise<Uint8Array> => {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
              const w = Math.ceil(targetWidth);
              const h = Math.ceil(targetHeight);
-             
              const canvas = document.createElement('canvas');
              canvas.width = w;
              canvas.height = h;
              const ctx = canvas.getContext('2d');
-             
              if (!ctx) { resolve(FALLBACK_PNG); return; }
 
              ctx.clearRect(0, 0, w, h);
-
-             // Calculate aspect ratio fit (Contain)
              const imgRatio = img.width / img.height;
              const targetRatio = w / h;
-             
              let drawW, drawH, offsetX, offsetY;
              
              if (imgRatio > targetRatio) {
-                 // Image is wider than target: constrain by width
                  drawW = w;
                  drawH = w / imgRatio;
                  offsetX = 0;
                  offsetY = (h - drawH) / 2;
              } else {
-                 // Image is taller than target: constrain by height
                  drawH = h;
                  drawW = h * imgRatio;
                  offsetX = (w - drawW) / 2;
                  offsetY = 0;
              }
-
-             // Draw image centered and contained
              ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-
              canvas.toBlob((blob) => {
-                 if (blob) {
-                     blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-                 } else {
-                     resolve(FALLBACK_PNG);
-                 }
+                 if (blob) blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+                 else resolve(FALLBACK_PNG);
              }, 'image/png');
-             
              URL.revokeObjectURL(img.src);
         };
-        img.onerror = () => {
-             resolve(FALLBACK_PNG);
-        };
+        img.onerror = () => resolve(FALLBACK_PNG);
         img.src = URL.createObjectURL(file);
     });
-};
-
-export const addPlaceholderToSvga = async (
-  svgaData: SvgaData,
-  rect: Rect, // Static Rect for all frames
-  keyName: string,
-  customImageBytes?: Uint8Array, // Optional: Use custom image data (e.g. text bitmap) instead of transparent placeholder
-  animation: AnimationPreset = 'none',
-  animConfig: AnimationConfig = { cycles: 1, intensity: 1 }
-): Promise<SvgaData> => {
-  // Use custom bytes if provided, otherwise generate transparent PNG of exact size
-  let pngBytes = customImageBytes;
-  if (!pngBytes) {
-      // Pass dimensions to match selection exactly
-      pngBytes = await generatePlaceholderPng(rect.width, rect.height);
-  }
-  
-  const safeKeyName = sanitizeKey(keyName);
-  const newImages = svgaData.images ? { ...svgaData.images } : {};
-  const totalFrames = svgaData.params?.frames || 0;
-  const mainFrames = [];
-  const spritesToAdd = [];
-  const { cycles, intensity } = animConfig;
-
-  // Note: Previous Frame Baking logic for shine animation has been removed
-  // in favor of the Dual Layer approach below which is more efficient.
-
-  const imageBase64 = uint8ArrayToBase64(pngBytes);
-  newImages[safeKeyName] = imageBase64;
-  
-  // 1. Main Sprite
-  for (let i = 0; i < totalFrames; i++) {
-    if (rect.width <= 0 || rect.height <= 0) {
-            mainFrames.push({ alpha: 0, layout: {}, transform: {} });
-            continue;
-    }
-    // ... Animation Math ...
-    let animScale = 1; let animY = 0;
-    const progress = totalFrames > 0 ? i / totalFrames : 0; 
-    const PI2 = Math.PI * 2;
-    
-    switch (animation) {
-            case 'pulse': animScale = 1 + Math.sin(progress * PI2 * cycles) * (0.1 * intensity); break;
-            case 'float': animY = Math.sin(progress * PI2 * cycles) * (6 * intensity); break;
-    }
-
-    mainFrames.push({
-        alpha: 1,
-        layout: { x: 0, y: 0, width: rect.width, height: rect.height },
-        transform: { 
-            a: animScale, d: animScale, 
-            tx: rect.x + (rect.width * (1-animScale))/2, 
-            ty: rect.y + (rect.height * (1-animScale))/2 + animY 
-        }
-    });
-  }
-  
-  spritesToAdd.push({
-    imageKey: safeKeyName,
-    frames: mainFrames,
-    matteKey: ""
-  });
-
-  // 2. Shine Sprite
-  if (animation === 'shine') {
-      const shineBytes = await generateShineBitmap(rect.width, rect.height);
-      newImages[`${safeKeyName}_shine`] = uint8ArrayToBase64(shineBytes);
-      const shineFrames = [];
-      
-      for (let i = 0; i < totalFrames; i++) {
-            let rawProgress = (totalFrames > 0 ? i / totalFrames : 0) * cycles;
-            let progress = rawProgress % 1.0;
-            const startTx = rect.x - rect.width;
-            const endTx = rect.x + rect.width;
-            const currentTx = startTx + (endTx - startTx) * progress;
-            
-            shineFrames.push({
-                alpha: 1,
-                layout: { x: 0, y: 0, width: rect.width, height: rect.height },
-                transform: { a: 1, d: 1, tx: currentTx, ty: rect.y }
-            });
-      }
-      spritesToAdd.push({
-          imageKey: `${safeKeyName}_shine`,
-          frames: shineFrames,
-          matteKey: safeKeyName // Use Main Sprite as matte
-      });
-  }
-
-  return {
-    ...svgaData,
-    images: newImages,
-    sprites: [...(svgaData.sprites || []), ...spritesToAdd],
-  };
 };
 
 export const reprocessImageTo32BitPng = async (base64OrUrl: string): Promise<string> => {
@@ -700,11 +457,8 @@ export const reprocessImageTo32BitPng = async (base64OrUrl: string): Promise<str
              resolve(base64);
         };
         img.onerror = () => resolve(base64OrUrl);
-        if (base64OrUrl.startsWith('data:')) {
-            img.src = base64OrUrl;
-        } else {
-            img.src = 'data:image/png;base64,' + base64OrUrl;
-        }
+        if (base64OrUrl.startsWith('data:')) img.src = base64OrUrl;
+        else img.src = 'data:image/png;base64,' + base64OrUrl;
     });
 };
 
@@ -719,4 +473,136 @@ export const sanitizeImagesTo32Bit = async (images: Record<string, string>): Pro
         }
     }));
     return processed;
+};
+
+export const addPlaceholderToSvga = async (
+  svgaData: SvgaData,
+  rect: Rect, 
+  keyName: string,
+  customImageBytes?: Uint8Array, 
+  animations: AnimationPreset[] = [], // Changed to Array
+  animConfig: AnimationConfig = { cycles: 1, intensity: 1 }
+): Promise<SvgaData> => {
+  // Use custom bytes if provided, otherwise generate transparent PNG of exact size
+  let pngBytes = customImageBytes;
+  if (!pngBytes) {
+      pngBytes = await generatePlaceholderPng(rect.width, rect.height);
+  }
+  
+  const safeKeyName = sanitizeKey(keyName);
+  const newImages = svgaData.images ? { ...svgaData.images } : {};
+  const totalFrames = svgaData.params?.frames || 0;
+  const mainFrames = [];
+  const spritesToAdd = [];
+  const { cycles, intensity } = animConfig;
+
+  const imageBase64 = uint8ArrayToBase64(pngBytes);
+  newImages[safeKeyName] = imageBase64;
+  
+  // 1. Main Sprite (Combine Transform Animations: Pulse + Float)
+  for (let i = 0; i < totalFrames; i++) {
+    if (rect.width <= 0 || rect.height <= 0) {
+            mainFrames.push({ alpha: 0, layout: {}, transform: {} });
+            continue;
+    }
+    
+    let animScale = 1; 
+    let animY = 0;
+    const progress = totalFrames > 0 ? i / totalFrames : 0; 
+    const PI2 = Math.PI * 2;
+    
+    // Apply Pulse
+    if (animations.includes('pulse')) {
+        animScale *= (1 + Math.sin(progress * PI2 * cycles) * (0.05 * intensity));
+    }
+    
+    // Apply Float
+    if (animations.includes('float')) {
+        animY += Math.sin(progress * PI2 * cycles) * (6 * intensity);
+    }
+
+    mainFrames.push({
+        alpha: 1,
+        layout: { x: 0, y: 0, width: rect.width, height: rect.height },
+        transform: { 
+            a: animScale, d: animScale, 
+            tx: rect.x + (rect.width * (1-animScale))/2, 
+            ty: rect.y + (rect.height * (1-animScale))/2 + animY 
+        }
+    });
+  }
+  
+  spritesToAdd.push({
+    imageKey: safeKeyName,
+    frames: mainFrames,
+    matteKey: ""
+  });
+
+  // 2. Shine Sprite (Improved: Static Sprite + Multi-Layer ClipPath Animation for Feathering)
+  if (animations.includes('shine')) {
+      let shineBytes: Uint8Array;
+      
+      // If we have content (text/image), generate a PALE GOLD silhouette with BLUR.
+      if (customImageBytes && customImageBytes.length > 0) {
+          shineBytes = await generatePaleGoldSilhouette(customImageBytes, rect.width, rect.height);
+      } else {
+          // For Key placeholders without content, use a solid PALE GOLD block
+          shineBytes = await generatePaleGoldRectPng(rect.width, rect.height);
+      }
+      
+      const shineKey = `${safeKeyName}_shine`;
+      newImages[shineKey] = uint8ArrayToBase64(shineBytes);
+      
+      // Multi-layer clip path to simulate soft edge
+      const layers = [
+          { offset: -rect.width * 0.05, alpha: 0.3 }, // Leading
+          { offset: 0, alpha: 0.9 }, // Center (Bright)
+          { offset: rect.width * 0.05, alpha: 0.3 }, // Trailing
+      ];
+
+      const w = rect.width;
+      const h = rect.height;
+      const tanAngle = 0.577; // tan(30)
+      const xOffset = h * tanAngle; 
+      const bandWidth = w * (0.4 * intensity); 
+
+      layers.forEach((layer, idx) => {
+          const shineFrames = [];
+          for (let i = 0; i < totalFrames; i++) {
+                let progress = (totalFrames > 0 ? i / totalFrames : 0) * cycles;
+                progress = progress % 1.0;
+                
+                // Calculate Center X of the band (Left to Right Sweep)
+                const startX = -bandWidth - xOffset;
+                const endX = w + bandWidth + xOffset;
+                const cx = startX + (endX - startX) * progress + layer.offset;
+                
+                // Calculate Polygon Points
+                const x1 = cx + xOffset - bandWidth/2; 
+                const x2 = cx + xOffset + bandWidth/2; 
+                const x3 = cx - xOffset + bandWidth/2; 
+                const x4 = cx - xOffset - bandWidth/2; 
+                
+                const d = `M ${x1} 0 L ${x2} 0 L ${x3} ${h} L ${x4} ${h} Z`;
+                
+                shineFrames.push({
+                    alpha: layer.alpha, 
+                    layout: { x: 0, y: 0, width: rect.width, height: rect.height },
+                    transform: { a: 1, d: 1, tx: rect.x, ty: rect.y }, 
+                    clipPath: d 
+                });
+          }
+          spritesToAdd.push({
+              imageKey: shineKey, 
+              frames: shineFrames,
+              matteKey: "" 
+          });
+      });
+  }
+
+  return {
+    ...svgaData,
+    images: newImages,
+    sprites: [...(svgaData.sprites || []), ...spritesToAdd],
+  };
 };

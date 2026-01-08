@@ -1,5 +1,6 @@
+
 import React, { useCallback, useState } from "react";
-import { Upload, FileType, AlertCircle, Languages } from "lucide-react";
+import { Upload, FileType, AlertCircle } from "lucide-react";
 import { ProcessedSvga, Language } from "../types";
 import { decodeSvga } from "../services/svgaService";
 
@@ -13,7 +14,7 @@ const TEXT = {
     en: {
         title: "SVGA Key Injector",
         subtitle: "Upload SVGA animation, select area, inject named placeholder key.",
-        dragDrop: "Drag & Drop SVGA File",
+        dragDrop: "Drag & Drop SVGA File Here",
         browse: "or click to browse",
         support: "Supports SVGA 1.x / 2.0",
         parsing: "Parsing Structure...",
@@ -23,7 +24,7 @@ const TEXT = {
     zh: {
         title: "SVGA 动态图层注入工具",
         subtitle: "上传 SVGA 动画，框选区域并注入可替换的动态 Key 图层。",
-        dragDrop: "拖拽 SVGA 文件到这里",
+        dragDrop: "拖拽 SVGA 文件到任意位置",
         browse: "或点击选择文件",
         support: "支持 SVGA 1.x / 2.0 格式",
         parsing: "正在解析文件结构...",
@@ -76,6 +77,8 @@ const SvgaUploader: React.FC<SvgaUploaderProps> = ({ onUpload, language, setLang
 
   const onDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    // Only set to false if we are leaving the main container
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragging(false);
   }, []);
 
@@ -94,7 +97,12 @@ const SvgaUploader: React.FC<SvgaUploaderProps> = ({ onUpload, language, setLang
   };
 
   return (
-    <div className="relative flex flex-col items-center justify-center min-h-[100dvh] bg-[#0A0F1C] text-white p-6 overflow-hidden">
+    <div 
+        className="relative flex flex-col items-center justify-center min-h-[100dvh] bg-[#0A0F1C] text-white p-6 overflow-hidden"
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+    >
       {/* Background Decor */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none"></div>
@@ -125,9 +133,6 @@ const SvgaUploader: React.FC<SvgaUploaderProps> = ({ onUpload, language, setLang
       </div>
 
       <div
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
         className={`
           group w-full max-w-xl aspect-[16/9] rounded-3xl border border-dashed transition-all duration-500 ease-out
           flex flex-col items-center justify-center cursor-pointer relative overflow-hidden backdrop-blur-sm z-10
@@ -173,6 +178,16 @@ const SvgaUploader: React.FC<SvgaUploaderProps> = ({ onUpload, language, setLang
           )}
         </div>
       </div>
+
+      {/* Full Screen Drop Overlay */}
+      {isDragging && (
+          <div className="absolute inset-0 z-50 bg-blue-900/40 backdrop-blur-md flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-3xl animate-in fade-in duration-200 pointer-events-none">
+              <div className="text-center">
+                  <Upload size={64} className="text-white mx-auto mb-4 animate-bounce" />
+                  <h2 className="text-2xl font-bold text-white">{t.dragDrop}</h2>
+              </div>
+          </div>
+      )}
 
       {error && (
         <div className="mt-8 flex items-center gap-3 bg-red-500/10 border border-red-500/20 text-red-300 px-5 py-3 rounded-xl max-w-md w-full animate-in fade-in slide-in-from-bottom-2 backdrop-blur-md">

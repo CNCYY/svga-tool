@@ -1,3 +1,4 @@
+
 // Global types provided by external scripts
 declare global {
   interface Window {
@@ -42,3 +43,32 @@ export interface AnimationConfig {
 }
 
 export type Language = 'en' | 'zh';
+
+export type LayerType = 'key' | 'text' | 'image';
+
+export interface EditorLayer {
+  id: string;
+  type: LayerType;
+  name: string;
+  rect: Rect;
+
+  // Animation (Updated to Array)
+  animations: AnimationPreset[];
+  animConfig: AnimationConfig;
+
+  // Text Properties
+  textContent: string;
+  textSize: number;
+  textColor: string;
+  fontFamily: string;
+  isGradient: boolean;
+  gradientStart: string;
+  gradientEnd: string;
+
+  // Image Properties
+  imageFile: File | null;
+  imagePreviewUrl: string | null;
+
+  // Render Cache
+  cachedPreviewUrl: string | null;
+}
