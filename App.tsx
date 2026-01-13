@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import SvgaUploader from "./components/SvgaUploader";
 import SvgaEditor from "./components/SvgaEditor";
@@ -22,6 +23,7 @@ const App: React.FC = () => {
         <SvgaEditor 
             processedSvga={svgaData} 
             onReset={handleReset} 
+            onUpload={handleUpload}
             language={language}
         />
       ) : (

@@ -1,12 +1,13 @@
 
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { ProcessedSvga, Rect, AnimationPreset, Language, EditorLayer, LayerType } from "../types";
-import { addPlaceholderToSvga, encodeSvga, sanitizeImagesTo32Bit, generateTextBitmap, processUploadedImage } from "../services/svgaService";
-import { Download, Play, Pause, Layers, MousePointer2, FileCode, Clock, FileText, Type, SquareDashed, Grid3X3, Image as ImageIcon, Upload, Palette, Sparkles, Move, Trash2, Camera, X } from "lucide-react";
+import { addPlaceholderToSvga, encodeSvga, sanitizeImagesTo32Bit, generateTextBitmap, processUploadedImage, decodeSvga } from "../services/svgaService";
+import { Download, Play, Pause, Layers, MousePointer2, FileCode, Clock, FileText, Type, SquareDashed, Grid3X3, Image as ImageIcon, Upload, Palette, Sparkles, Move, Trash2, Camera, X, RefreshCcw, Eraser } from "lucide-react";
 
 interface SvgaEditorProps {
   processedSvga: ProcessedSvga;
   onReset: () => void;
+  onUpload: (data: ProcessedSvga) => void;
   language: Language;
 }
 
@@ -44,6 +45,7 @@ const I18N = {
         exportThumb: "Export Frame (PNG)",
         processing: "Processing...",
         openDiff: "Open Different File",
+        clearCanvas: "Clear All Layers",
         frame: "Frame",
         placeholderText: "Enter text...",
         placeholderKey: "e.g. img_01",
@@ -53,7 +55,10 @@ const I18N = {
         deleteLayer: "Delete Layer",
         thumbTitle: "Export Thumbnail",
         downloadPng: "Download PNG",
-        close: "Close"
+        close: "Close",
+        dropToReplace: "Drop to replace current file",
+        invalidFile: "Invalid file. Please drop an .svga file.",
+        errorParams: "Failed to parse SVGA file."
     },
     zh: {
         layerType: "图层类型",
@@ -87,6 +92,7 @@ const I18N = {
         exportThumb: "导出当前帧 (PNG)",
         processing: "处理中...",
         openDiff: "打开其他文件",
+        clearCanvas: "清空所有图层",
         frame: "帧",
         placeholderText: "输入文本...",
         placeholderKey: "例如：avatar_01",
@@ -96,7 +102,10 @@ const I18N = {
         deleteLayer: "删除图层",
         thumbTitle: "导出缩略图",
         downloadPng: "下载 PNG",
-        close: "关闭"
+        close: "关闭",
+        dropToReplace: "松开以替换当前文件",
+        invalidFile: "文件格式错误，请拖入 .svga 文件",
+        errorParams: "解析 SVGA 文件失败"
     }
 };
 
@@ -127,7 +136,7 @@ const StyledInput = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
     />
 );
 
-const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, language }) => {
+const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, onUpload, language }) => {
   const t = I18N[language];
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -146,6 +155,7 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
 
   // Interaction State
   const [isDragging, setIsDragging] = useState(false);
+  const [isFileDragging, setIsFileDragging] = useState(false);
   const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null);
   const [interactionMode, setInteractionMode] = useState<'create' | 'move'>('create');
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -184,6 +194,13 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
       setActiveLayerId(null);
   };
 
+  const clearAllLayers = () => {
+      if (confirm(language === 'zh' ? "确定要清空所有图层吗？" : "Are you sure you want to clear all layers?")) {
+          setLayers([]);
+          setActiveLayerId(null);
+      }
+  };
+
   // Toggle Animation in Array
   const toggleAnimation = (animId: AnimationPreset) => {
       if (!activeLayer) return;
@@ -216,6 +233,14 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
       setOutputFilename(`${base}_patched`);
   }, [processedSvga.filename]);
 
+  // Sync dimensions when prop changes
+  useEffect(() => {
+      if (processedSvga.data.params) {
+          setSvgaWidth(processedSvga.data.params.viewBoxWidth);
+          setSvgaHeight(processedSvga.data.params.viewBoxHeight);
+      }
+  }, [processedSvga]);
+
   // Generate text previews
   useEffect(() => {
     if (!activeLayer || activeLayer.type !== 'text') return;
@@ -244,34 +269,52 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
       activeLayer?.gradientEnd, activeLayer?.rect.width, activeLayer?.rect.height
   ]);
 
-  // Init Main Player
+  // Init Main Player Instance (Once)
   useEffect(() => {
-    if (!canvasRef.current || !processedSvga.url) return;
-    if (player) player.clear();
+    if (!canvasRef.current) return;
     const { SVGA } = window;
     if (!SVGA) return;
 
-    try {
-        const parser = new SVGA.Parser();
-        const newPlayer = new SVGA.Player(canvasRef.current);
-        newPlayer.loops = 0;
-        newPlayer.clearsAfterStop = false;
-        newPlayer.setContentMode("Fill");
-        newPlayer.onFrame((frame: number) => setCurrentFrame(frame));
+    const newPlayer = new SVGA.Player(canvasRef.current);
+    newPlayer.loops = 0;
+    newPlayer.clearsAfterStop = false;
+    newPlayer.setContentMode("Fill");
+    newPlayer.onFrame((frame: number) => setCurrentFrame(frame));
+    
+    setPlayer(newPlayer);
 
-        parser.load(processedSvga.url, (loadedItem: any) => {
-          if (loadedItem.videoSize && (loadedItem.videoSize.width !== svgaWidth || loadedItem.videoSize.height !== svgaHeight)) {
-              setSvgaWidth(loadedItem.videoSize.width);
-              setSvgaHeight(loadedItem.videoSize.height);
+    return () => {
+        newPlayer.stopAnimation();
+        newPlayer.clear();
+    };
+  }, []);
+
+  // Load Content into Player (When file changes)
+  useEffect(() => {
+      if (!player || !processedSvga.url) return;
+      const { SVGA } = window;
+      if (!SVGA) return;
+
+      // Stop previous animation to prevent fighting
+      player.stopAnimation();
+      player.clear();
+      setIsPlaying(true);
+
+      const parser = new SVGA.Parser();
+      parser.load(processedSvga.url, (loadedItem: any) => {
+          // Double check to ensure dimension consistency
+          if (loadedItem.videoSize) {
+              if (loadedItem.videoSize.width !== svgaWidth || loadedItem.videoSize.height !== svgaHeight) {
+                setSvgaWidth(loadedItem.videoSize.width);
+                setSvgaHeight(loadedItem.videoSize.height);
+              }
           }
           setTotalFrames(loadedItem.frames);
           setVideoItem(loadedItem); // Cache video item for thumbnail modal
-          newPlayer.setVideoItem(loadedItem);
-          newPlayer.startAnimation();
-          setPlayer(newPlayer);
-        });
-    } catch (e) { console.error(e); }
-  }, [processedSvga.url]);
+          player.setVideoItem(loadedItem);
+          player.startAnimation();
+      });
+  }, [player, processedSvga.url]);
 
   // Thumbnail Modal Player Logic
   useEffect(() => {
@@ -578,6 +621,56 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
     finally { setIsProcessing(false); }
   };
 
+  // Drag and Drop File Replacement Handlers
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      // Only trigger if dragging a file
+      if (e.dataTransfer.types.includes("Files")) {
+          setIsFileDragging(true);
+      }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+      e.preventDefault();
+      // Simple check to see if we left the window or the main container
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      setIsFileDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsFileDragging(false);
+      
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          const file = e.dataTransfer.files[0];
+          if (!file.name.toLowerCase().endsWith(".svga")) {
+              alert(t.invalidFile);
+              return;
+          }
+          
+          // Reusing logic from SvgaUploader implicitly by duplicating for now (or could import if logic was shared in utils)
+          setIsProcessing(true);
+          try {
+              const buffer = await file.arrayBuffer();
+              const svgaData = await decodeSvga(buffer);
+              
+              const processed: ProcessedSvga = {
+                  buffer,
+                  data: svgaData,
+                  url: URL.createObjectURL(file),
+                  filename: file.name,
+              };
+              
+              onUpload(processed); // Switch to new file
+          } catch (err: any) {
+              console.error(err);
+              alert(t.errorParams || "Failed to parse SVGA");
+          } finally {
+              setIsProcessing(false);
+          }
+      }
+  };
+
   // Generate dynamic keyframes based on layer settings
   const layerKeyframesStyles = useMemo(() => {
     return layers.map(layer => {
@@ -626,7 +719,22 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
   }, [layers]);
 
   return (
-    <div className="flex flex-col lg:flex-row h-[100dvh] bg-[#0A0F1C] overflow-hidden text-slate-200 font-sans">
+    <div 
+        className="flex flex-col lg:flex-row h-[100dvh] bg-[#0A0F1C] overflow-hidden text-slate-200 font-sans relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+    >
+      {/* File Drop Overlay */}
+      {isFileDragging && (
+          <div className="absolute inset-0 z-[100] bg-indigo-900/80 backdrop-blur-sm flex items-center justify-center border-4 border-indigo-400 border-dashed m-4 rounded-3xl animate-in fade-in duration-200 pointer-events-none">
+              <div className="text-center text-white">
+                  <RefreshCcw size={64} className="mx-auto mb-4 animate-spin-slow" />
+                  <h2 className="text-3xl font-bold">{t.dropToReplace}</h2>
+              </div>
+          </div>
+      )}
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Pacifico&family=Playfair+Display:wght@700&family=Roboto:wght@700&display=swap');
         ${layerKeyframesStyles}
@@ -1172,9 +1280,14 @@ const SvgaEditor: React.FC<SvgaEditorProps> = ({ processedSvga, onReset, languag
                     {isProcessing ? t.processing : t.export}
                  </button>
                  
-                 <button onClick={onReset} className="w-full py-2 text-xs text-slate-500 hover:text-white transition-colors border border-dashed border-white/10 rounded-lg hover:border-white/30 hover:bg-white/5">
-                    {t.openDiff}
-                 </button>
+                 <div className="flex gap-2">
+                    <button onClick={clearAllLayers} className="flex-1 py-2 text-xs text-slate-500 hover:text-red-300 transition-colors border border-dashed border-white/10 rounded-lg hover:border-red-400/30 hover:bg-red-500/10 flex items-center justify-center gap-1.5" title={t.clearCanvas}>
+                        <Eraser size={14} /> {t.clearCanvas}
+                    </button>
+                    <button onClick={onReset} className="flex-1 py-2 text-xs text-slate-500 hover:text-white transition-colors border border-dashed border-white/10 rounded-lg hover:border-white/30 hover:bg-white/5">
+                        {t.openDiff}
+                    </button>
+                 </div>
             </div>
       </div>
     </div>
