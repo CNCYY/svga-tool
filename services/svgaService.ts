@@ -357,6 +357,16 @@ export const generateTextBitmap = async (
     isGradient: boolean = false,
     gradientEnd: string = "#ffffff"
 ): Promise<Uint8Array> => {
+    // Wait for the font to be ready in the browser before drawing to the canvas
+    if (document.fonts) {
+        try {
+            const fontSpec = `bold ${fontSize}px "${fontFamily}"`;
+            await document.fonts.load(fontSpec);
+        } catch (e) {
+            console.warn("Font loading failed, falling back to system fonts:", fontFamily);
+        }
+    }
+
     return new Promise((resolve) => {
         const w = Math.ceil(width);
         const h = Math.ceil(height);

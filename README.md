@@ -1,22 +1,20 @@
-# svga增加定制key、文字、图片工具
-> 让设计减少杂事专注创作，减轻运营等待排期压力
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-### svga加key（仅适用于头饰、勋章等轻量级的文件）
-* 拖动key值范围新增透明图层，命名根据开发设定要求即可
-* 常用key值命名在缓存中保留
-* 导出即可使用（flutter语言可能需要二次转换一下）
+# Run and deploy your AI Studio app
 
-### svga加字（仅适用于头饰、勋章等轻量级的文件）
-* 在画布中拖动范围新增透明图层，修改内容文案
-* 可设置字体、渐变、字号大小
-* 可设置动画，动画可多选
-* 导出即可使用（flutter语言可能需要二次转换一下）
-* 可选取某一帧导出缩略图
+This contains everything you need to run your app locally.
 
-### svga加图片（仅适用于头饰、勋章等轻量级的文件）
-* 在画布中拖动范围新增透明图层，添加图片
-* 可设置动画，动画可多选
-* 导出即可使用（flutter语言可能需要二次转换一下）
-* 可选取某一帧导出缩略图
+View your app in AI Studio: https://ai.studio/apps/drive/13DXpVunO8W6sZ05FqVv-uqSVxHYo4HEJ
 
-可框选多个，点击不同区域修改对应图层内容
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
